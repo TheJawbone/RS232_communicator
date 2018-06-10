@@ -1,16 +1,24 @@
 ﻿// The following code is based on an example from Microsoft's Developer Network
 
 using System;
+using System.Diagnostics;
 using System.IO.Ports;
 using System.Threading;
 
 public class PortChat
 {
     static bool _continue;
+    static bool _ackRecievied;
+    static bool _awaitingAck;
+    static int _pingTimeout = 500;
     static SerialPort _serialPort;
+    static Stopwatch stopwatch;
 
     public static void Main()
     {
+        stopwatch = new Stopwatch();
+        _ackRecievied = false;
+        _awaitingAck = false;
         string name;
         string message;
         StringComparer stringComparer = StringComparer.OrdinalIgnoreCase;
@@ -26,6 +34,7 @@ public class PortChat
         _serialPort.DataBits = SetPortDataBits(_serialPort.DataBits);
         _serialPort.StopBits = SetPortStopBits(_serialPort.StopBits);
         _serialPort.Handshake = SetPortHandshake(_serialPort.Handshake);
+        _serialPort.NewLine = SetTerminator(_serialPort.NewLine);
 
         // Set the read/write timeouts
         _serialPort.ReadTimeout = 500;
@@ -38,7 +47,7 @@ public class PortChat
         Console.Write("Name: ");
         name = Console.ReadLine();
 
-        Console.WriteLine("Type QUIT to exit");
+        Console.WriteLine("Type QUIT to exit or PING to test connection");
 
         while (_continue)
         {
@@ -47,6 +56,30 @@ public class PortChat
             if (stringComparer.Equals("quit", message))
             {
                 _continue = false;
+            }
+            else if (stringComparer.Equals("ping", message))
+            {
+                stopwatch.Start();
+                _awaitingAck = true;
+                _serialPort.WriteLine(String.Format(message));
+                long stopwatchValue = 0;
+                while(stopwatchValue <= _pingTimeout)
+                {
+                    stopwatchValue = stopwatch.ElapsedMilliseconds;
+                    if(_ackRecievied)
+                    {
+                        _awaitingAck = false;
+                        _ackRecievied = false;
+                        stopwatch.Reset();
+                        break;
+                    }
+                }
+                if(stopwatchValue >= _pingTimeout)
+                {
+                    Console.WriteLine("Ping timed out at " + _pingTimeout + "ms");
+                    _awaitingAck = false;
+                    stopwatch.Reset();
+                }
             }
             else
             {
@@ -66,7 +99,19 @@ public class PortChat
             try
             {
                 string message = _serialPort.ReadLine();
-                Console.WriteLine(message);
+                if (message.Equals("ping") || message.Equals("PING"))
+                {
+                    _serialPort.WriteLine("ack");
+                }
+                else if (message.Equals("ack") && _awaitingAck)
+                {
+                    Console.WriteLine("Ping successfull, time: " + stopwatch.ElapsedMilliseconds + "ms");
+                    _ackRecievied = true;
+                }
+                else if (!message.Equals("ack"))
+                {
+                    Console.WriteLine(message);
+                }
             }
             catch (TimeoutException) { }
         }
@@ -186,5 +231,70 @@ public class PortChat
         }
 
         return (Handshake)Enum.Parse(typeof(Handshake), handshake, true);
+    }
+
+    public static string SetTerminator(string defaultTerminator)
+    {
+        string terminator;
+
+        Console.Write("Enter terminator (Default: {0}): ", EscapeIt(defaultTerminator));
+        terminator = Console.ReadLine();
+        terminator = ReEscapeIt(terminator);
+
+        if (terminator == "")
+        {
+            terminator = defaultTerminator;
+        }
+        return terminator;
+    }
+
+    public static string EscapeIt(string value)
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (var cur in value)
+        {
+            switch (cur)
+            {
+                case '\t':
+                    builder.Append(@"\t");
+                    break;
+                case '\r':
+                    builder.Append(@"\r");
+                    break;
+                case '\n':
+                    builder.Append(@"\n");
+                    break;
+                default:
+                    builder.Append(cur);
+                    break;
+            }
+        }
+        return builder.ToString();
+    }
+
+    public static string ReEscapeIt(string value)
+    {
+        string retVal = "";
+        for (int i = 0; i <= value.Length - 2; i++)
+        {
+            string substring = value.Substring(i, 2);
+            switch (substring)
+            {
+                case "\\t":
+                    retVal += "\t";
+                    break;
+                case "\\r":
+                    retVal += "\r";
+                    break;
+                case "\\n":
+                    retVal += "\n";
+                    break;
+                default:
+                    retVal += substring;
+                    i++;
+                    break;
+            }
+        }
+        return retVal;
     }
 }
